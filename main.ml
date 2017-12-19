@@ -194,7 +194,7 @@ let robinson_solve cnf =
   true;;
 
 (* Applies Robinson's unification algorithm to a pair of clauses to find a unifier. If no unifier is found, the two clauses can't be solved to a new clause. *)
-let robinson_unifier clause1 clause2 =
+let robinson_unify clause1 clause2 =
   [];;
 
 (*############################################################# MAIN #############################################################*)
@@ -214,10 +214,12 @@ let solve expr =
 let main () =
   let x = Variable "x" in
   let y = Variable "y" in
-  let z = Variable "z" in  
+  let z = Variable "z" in
+
   let a = Constant "a" in
   let b = Constant "b" in
   let c = Constant "c" in    
+  
   let f = Not( Implies( Forall(x, Or( Atom("P", [x]), Atom("Q", [x]))), Or( Atom("P", [a]), Atom("Q", [a])))) in
   let f1 = Exists(x, Implies( Atom("P", [x]), And( Atom("P", [a]), Atom("P", [b])))) in  
   let f2 = Forall(x, Implies( Atom("P", [x]), Exists(y, Or( Atom("P", [y]), Atom("Q", [y]))))) in
