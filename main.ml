@@ -2,13 +2,13 @@
 
 (* Literal (variable or constant) *)
 type literal =
-    Constant of string            (* 'a' *)
+    Constant of string          (* 'a' *)
   | Variable of string          (* x *)
   | Function of literal list    (* f(x, y) *)
 
 (* Expression (made up of other expressions) *)
 type expression = 
-    Atom of string * literal list           (* P(x) *)
+    Atom of string * literal list         (* P(x) *)
   | Not of expression                     (* ¬A *)
   | Or of expression * expression         (* A ∨ B *)
   | And of expression * expression        (* A ∧ B *)
@@ -19,7 +19,7 @@ type expression =
 
 (* Simple type for atoms or negated atoms, to be used only after the formula is in CNF *)
 type atom = 
-    PosAtom of string * literal list    (* P(x) *)
+    PosAtom of string * literal list  (* P(x) *)
   | NegAtom of string * literal list  (* ~P(x) *)
 
 (* constants type that acts as a global index to keep generating new constant names during skolemisation *)
@@ -42,7 +42,7 @@ and string_of_literals literals =
 (* Returns a string from an expression, as ¬(P(a) => ¬(Q(b) ∧ P(c))) *)
 and string_of_expression expr = 
   match expr with
-    Atom (x,y) -> String.concat "" (x :: "(" :: (string_of_literals y) :: ")" :: [])                                          (* "P(x)" *)
+    Atom (x,y) -> String.concat "" (x :: "(" :: (string_of_literals y) :: ")" :: [])                                        (* "P(x)" *)
   | Not x -> String.concat "" ("~" :: string_of_expression x :: [])                                                         (* "~P(x)" *)
   | Or (x,y) -> String.concat "" ("(" :: string_of_expression x :: " | " :: string_of_expression y :: ")" :: [])            (* "(P(x) | Q(x))" *)
   | And (x,y) -> String.concat "" ("(" :: string_of_expression x :: " & " :: string_of_expression y :: ")" :: [])           (* "(P(x) & Q(x))" *)
@@ -73,7 +73,7 @@ let rec assign_atom arguments var unbound =
     [] -> []
   | h::t -> if h = var then 
       (match unbound with 
-         [] ->                                                                         (* if there is no unbound variable, assign a constant instead *)
+         [] ->                                                                       (* if there is no unbound variable, assign a constant instead *)
          let label = String.concat "" ("c" :: string_of_int !(cons.index) :: []) in
          [Constant(label)]
        | _ -> Function(unbound)::(assign_atom t var unbound))
@@ -85,7 +85,7 @@ let rec unbound_variables_in_atom arguments bound =
     [] -> []
   | h::t -> if List.mem h bound then unbound_variables_in_atom t bound else   (* for each argument, if it is bound by a quantifier, remove it from the list *)
       (match h with
-         Constant (x) -> unbound_variables_in_atom t bound                       (* also make sure the argument isn't a constant *)
+         Constant (x) -> unbound_variables_in_atom t bound                    (* also make sure the argument isn't a constant *)
        | _ -> h::(unbound_variables_in_atom t bound));;
 
 (* Removes duplicate elements from the list *)
@@ -107,7 +107,7 @@ let rec unbound_variables ?(bound=[]) expr =
 let rec assign ?(i=0) expr ?(unbound = (unbound_variables expr)) var =
   print_endline (String.concat "" ("Assigning:     " :: String.make i ' ' :: (string_of_expression expr) :: " with unbound variables: " :: string_of_literals unbound :: []));
   match expr with 
-    Forall (x,y) | Exists (x,y) -> assign ~i:(i + 1) y ~unbound var                                             (* ∀x.Φ or ∃x.Φ ---> Add x to bound variables *)
+    Forall (x,y) | Exists (x,y) -> assign ~i:(i + 1) y ~unbound var                                           (* ∀x.Φ or ∃x.Φ ---> Add x to bound variables *)
   | Not x -> assign x ~unbound var                                                                            (* Φ ---> Do nothing, simply make a recursive call *)
   | And (x,y) -> And( (assign ~i:(i + 1) x ~unbound var), (assign ~i:(i + 1) y ~unbound var) )
   | Or (x,y) -> Or( (assign ~i:(i + 1) x ~unbound var), (assign ~i:(i + 1) y ~unbound var) )
@@ -119,7 +119,7 @@ let rec assign ?(i=0) expr ?(unbound = (unbound_variables expr)) var =
 let rec skolem ?(i=0) expr =
   print_endline (String.concat "" ("Skolemizing:   " :: String.make i ' ' :: (string_of_expression expr) :: []));
   match expr with
-    Or (x,y) -> Or( (skolem ~i:(i + 1) x), (skolem ~i:(i + 1) y) )                (* s(Φ ∨ Φ') ---> s(Φ) ∨ s(Φ') *)
+    Or (x,y) -> Or( (skolem ~i:(i + 1) x), (skolem ~i:(i + 1) y) )              (* s(Φ ∨ Φ') ---> s(Φ) ∨ s(Φ') *)
   | And (x,y) -> And( (skolem ~i:(i + 1) x), (skolem ~i:(i + 1) y) )            (* s(Φ ∧ Φ') ---> s(Φ) ∧ s(Φ') *)
   | Not x -> Not(herbrand ~i:(i + 1) x)                                         (* s(¬Φ) ---> ¬h(Φ) *)
   | Implies (x,y) -> Implies( (herbrand ~i:(i + 1) x), (skolem ~i:(i + 1) y) )  (* s(Φ => Φ') ---> h(Φ) => s(Φ') *)
@@ -133,7 +133,7 @@ let rec skolem ?(i=0) expr =
 and herbrand ?(i=0) expr =
   print_endline (String.concat "" ("Herbrandizing: " :: String.make i ' ' :: (string_of_expression expr) :: []));
   match expr with
-    Or (x,y) -> Or( (herbrand ~i:(i + 1) x), (herbrand ~i:(i + 1) y) )            (* h(Φ ∨ Φ') ---> h(Φ) ∨ h(Φ') *)
+    Or (x,y) -> Or( (herbrand ~i:(i + 1) x), (herbrand ~i:(i + 1) y) )          (* h(Φ ∨ Φ') ---> h(Φ) ∨ h(Φ') *)
   | And (x,y) -> And( (herbrand ~i:(i + 1) x), (herbrand ~i:(i + 1) y) )        (* h(Φ ∧ Φ') ---> h(Φ) ∧ h(Φ') *)
   | Not x -> Not(skolem ~i:(i + 1) x)                                           (* h(¬Φ) ---> ¬s(Φ) *)
   | Implies (x,y) -> Implies( (skolem ~i:(i + 1) x), (herbrand ~i:(i + 1) y) )  (* h(Φ => Φ') ---> s(Φ) => h(Φ') *)
@@ -148,21 +148,21 @@ let rec simplify ?(i=0) expr =
   print_endline (String.concat "" ("Simplifying:   " :: String.make i ' ' :: string_of_expression expr :: []));
   let result = 
     match expr with 
-      Atom (x,y) -> Atom(x,y)                                                 (* P(x) ---> P(x) *)
+      Atom (x,y) -> Atom(x,y)                                              (* P(x) ---> P(x) *)
     | Not x -> 
       (match x with
-         Not a -> x                                                          (* ¬¬A ---> A *)
+         Not a -> x                                                        (* ¬¬A ---> A *)
        | And (a,b) -> Or( Not(a), Not(b) )                                 (* ¬(A ∨ B) ---> ¬A ∧ ¬B *)
        | Or (a,b) -> And( Not(a), Not(b) )                                 (* ¬(A ∧ B) ---> ¬A) ∨ ¬B *)
        | _ -> Not(simplify ~i:(i + 1) x))                                  (* ¬A ---> ¬A *)
     | Or (x,y) -> 
       (match (x,y) with
-         _, And (b,c) -> And( Or(x,b), Or(x,c) )                              (* A ∨ (B ∧ C) ---> (A ∨ B) ∧ (A ∨ C) *)
-       |And (a,b), _ -> And( Or(a,y), Or(b,y) )                              (* (A ∧ B) ∨ C ---> (A ∨ C) ∧ (B ∨ C) *)
-       | (_,_) -> Or( (simplify ~i:(i + 1) x), (simplify ~i:(i + 1) y) ))    (* A ∨ B ---> A ∨ B *)
-    | And (x,y) -> And( (simplify ~i:(i + 1) x), (simplify ~i:(i + 1) y) )  (* A ∧ B ---> A ∧ B *)
-    | Implies (x,y) -> Or( Not(x), y)                                       (* A => B ---> ¬A ∨ B *)
-    | Equivalent (x,y) -> And( Implies(x,y), Implies(y,x) )                 (*A <=> B ---> (A => B) ∧ (B => A) *) 
+         _, And (b,c) -> And( Or(x,b), Or(x,c) )                           (* A ∨ (B ∧ C) ---> (A ∨ B) ∧ (A ∨ C) *)
+       |And (a,b), _ -> And( Or(a,y), Or(b,y) )                            (* (A ∧ B) ∨ C ---> (A ∨ C) ∧ (B ∨ C) *)
+       | (_,_) -> Or( (simplify ~i:(i + 1) x), (simplify ~i:(i + 1) y) ))  (* A ∨ B ---> A ∨ B *)
+    | And (x,y) -> And( (simplify ~i:(i + 1) x), (simplify ~i:(i + 1) y) ) (* A ∧ B ---> A ∧ B *)
+    | Implies (x,y) -> Or( Not(x), y)                                      (* A => B ---> ¬A ∨ B *)
+    | Equivalent (x,y) -> And( Implies(x,y), Implies(y,x) )                (*A <=> B ---> (A => B) ∧ (B => A) *) 
     | Forall (x,y) | Exists (x,y) -> skolem ~i expr in
   if expr = result then     
     result
