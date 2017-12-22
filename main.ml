@@ -2,25 +2,29 @@
 
 (* Literal (variable or constant) *)
 type literal =
-    Constant of string          (* 'a' *)
-  | Variable of string          (* x *)
-  | Function of literal list    (* f(x, y) *)
+    Constant of string                 (* 'a' *)
+  | Variable of string                 (* x *)
+  | Function of string * literal list  (* f(x, y) *)
 
 (* Expression (made up of other expressions) *)
 type expression = 
-    Atom of string * literal list         (* P(x) *)
-  | Not of expression                     (* ¬A *)
-  | Or of expression * expression         (* A ∨ B *)
-  | And of expression * expression        (* A ∧ B *)
-  | Implies of expression * expression    (* A => B *)
-  | Equivalent of expression * expression (* A <=> B *)
-  | Forall of literal * expression        (* ∀x.P(x) *) 
-  | Exists of literal * expression        (* ∃x.P(x) *)
+    Atom of string * literal list          (* P(x) *)
+  | Not of expression                      (* ¬A *)
+  | Or of expression * expression          (* A ∨ B *)
+  | And of expression * expression         (* A ∧ B *)
+  | Implies of expression * expression     (* A => B *)
+  | Equivalent of expression * expression  (* A <=> B *)
+  | Forall of literal * expression         (* ∀x.P(x) *) 
+  | Exists of literal * expression         (* ∃x.P(x) *)
 
 (* Simple type for atoms or negated atoms, to be used only after the formula is in CNF *)
 type atom = 
     PosAtom of string * literal list  (* P(x) *)
   | NegAtom of string * literal list  (* ~P(x) *)
+
+(* Type for substitutions. Used in the unification algorithm *)
+type substitution =
+    Substitution of literal * literal  
 
 (* constants type that acts as a global index to keep generating new constant names during skolemisation *)
 type constants = { index : int ref };;
@@ -33,7 +37,7 @@ let rec string_of_literal literal =
   match literal with
     Constant x -> String.concat "" ("\'" :: x :: "\'" :: [])
   | Variable x -> x 
-  | Function x -> String.concat "" ("f" :: "(" :: (string_of_literals x) :: ")" :: [])
+  | Function (x, y) -> String.concat "" (x :: "(" :: (string_of_literals y) :: ")" :: [])
 
 (* Returns a string from a list of literals, as x, y, z *)
 and string_of_literals literals =
@@ -76,16 +80,16 @@ let rec assign_atom arguments var unbound =
          [] ->                                                                       (* if there is no unbound variable, assign a constant instead *)
          let label = String.concat "" ("c" :: string_of_int !(cons.index) :: []) in
          [Constant(label)]
-       | _ -> Function(unbound)::(assign_atom t var unbound))
-    else h::(assign_atom t var unbound);;                                           (* for each argument equal to var, replace it with a function of all unbound variables *)
+       | _ -> Function("f", unbound)::(assign_atom t var unbound))
+    else h::(assign_atom t var unbound);;                                            (* for each argument equal to var, replace it with a function of all unbound variables *)
 
 (* Returns a list of all unbound variables in an atom *)
 let rec unbound_variables_in_atom arguments bound =
   match arguments with 
     [] -> []
-  | h::t -> if List.mem h bound then unbound_variables_in_atom t bound else   (* for each argument, if it is bound by a quantifier, remove it from the list *)
+  | h::t -> if List.mem h bound then unbound_variables_in_atom t bound else  (* for each argument, if it is bound by a quantifier, remove it from the list *)
       (match h with
-         Constant (x) -> unbound_variables_in_atom t bound                    (* also make sure the argument isn't a constant *)
+         Constant (x) -> unbound_variables_in_atom t bound                   (* also make sure the argument isn't a constant *)
        | _ -> h::(unbound_variables_in_atom t bound));;
 
 (* Removes duplicate elements from the list *)
@@ -148,21 +152,21 @@ let rec simplify ?(i=0) expr =
   print_endline (String.concat "" ("Simplifying:   " :: String.make i ' ' :: string_of_expression expr :: []));
   let result = 
     match expr with 
-      Atom (x,y) -> Atom(x,y)                                              (* P(x) ---> P(x) *)
+      Atom (x,y) -> Atom(x,y)                                               (* P(x) ---> P(x) *)
     | Not x -> 
       (match x with
-         Not a -> x                                                        (* ¬¬A ---> A *)
-       | And (a,b) -> Or( Not(a), Not(b) )                                 (* ¬(A ∨ B) ---> ¬A ∧ ¬B *)
-       | Or (a,b) -> And( Not(a), Not(b) )                                 (* ¬(A ∧ B) ---> ¬A) ∨ ¬B *)
-       | _ -> Not(simplify ~i:(i + 1) x))                                  (* ¬A ---> ¬A *)
+         Not a -> x                                                         (* ¬¬A ---> A *)
+       | And (a,b) -> Or( Not(a), Not(b) )                                  (* ¬(A ∨ B) ---> ¬A ∧ ¬B *)
+       | Or (a,b) -> And( Not(a), Not(b) )                                  (* ¬(A ∧ B) ---> ¬A) ∨ ¬B *)
+       | _ -> Not(simplify ~i:(i + 1) x))                                   (* ¬A ---> ¬A *)
     | Or (x,y) -> 
       (match (x,y) with
-         _, And (b,c) -> And( Or(x,b), Or(x,c) )                           (* A ∨ (B ∧ C) ---> (A ∨ B) ∧ (A ∨ C) *)
-       |And (a,b), _ -> And( Or(a,y), Or(b,y) )                            (* (A ∧ B) ∨ C ---> (A ∨ C) ∧ (B ∨ C) *)
-       | (_,_) -> Or( (simplify ~i:(i + 1) x), (simplify ~i:(i + 1) y) ))  (* A ∨ B ---> A ∨ B *)
-    | And (x,y) -> And( (simplify ~i:(i + 1) x), (simplify ~i:(i + 1) y) ) (* A ∧ B ---> A ∧ B *)
-    | Implies (x,y) -> Or( Not(x), y)                                      (* A => B ---> ¬A ∨ B *)
-    | Equivalent (x,y) -> And( Implies(x,y), Implies(y,x) )                (*A <=> B ---> (A => B) ∧ (B => A) *) 
+         _, And (b,c) -> And( Or(x,b), Or(x,c) )                            (* A ∨ (B ∧ C) ---> (A ∨ B) ∧ (A ∨ C) *)
+       |And (a,b), _ -> And( Or(a,y), Or(b,y) )                             (* (A ∧ B) ∨ C ---> (A ∨ C) ∧ (B ∨ C) *)
+       | (_,_) -> Or( (simplify ~i:(i + 1) x), (simplify ~i:(i + 1) y) ))   (* A ∨ B ---> A ∨ B *)
+    | And (x,y) -> And( (simplify ~i:(i + 1) x), (simplify ~i:(i + 1) y) )  (* A ∧ B ---> A ∧ B *)
+    | Implies (x,y) -> Or( Not(x), y)                                       (* A => B ---> ¬A ∨ B *)
+    | Equivalent (x,y) -> And( Implies(x,y), Implies(y,x) )                 (*A <=> B ---> (A => B) ∧ (B => A) *) 
     | Forall (x,y) | Exists (x,y) -> skolem ~i expr in
   if expr = result then     
     result
@@ -189,13 +193,76 @@ let rec to_cnf expr =
 
 (*############################################################# SOLVING #############################################################*)
 
-(* Applies Robinson's resolution algorithm to determine whether the formula is satisfiable. If it can generate an empty clause then the formula is invalid. Otherwise it is satisfiable. *)
-let robinson_solve cnf = 
-  true;;
+let rec vars_f args =
+  match args with 
+    [] -> []
+  | Function(x, y) :: t -> List.append (vars_f y) (vars_f t)
+  | Variable(x) :: t -> Variable(x) :: vars_f t
+  | _ :: t -> vars_f t;;
+
+let rec vars_x set =
+  match set with 
+    [] -> []
+  | (Function(x, y), _) :: t -> List.append (vars_f y) (vars_x t)
+  | (Variable(x), _) :: t -> Variable(x) :: vars_x t
+  | _ :: t -> vars_x t;;
 
 (* Applies Robinson's unification algorithm to a pair of clauses to find a unifier. If no unifier is found, the two clauses can't be solved to a new clause. *)
-let robinson_unify clause1 clause2 =
-  [];;
+let rec robinson_unify set =
+  match set with 
+    (Constant(x), Constant(y)) :: t -> if x = y then robinson_unify t else []
+  | (Function(u, v), Function(x, y)) :: t -> if u = x then robinson_unify (List.append (List.combine v y) t) else []
+  | (Function(x, y), Variable(z)) :: t -> robinson_unify ((Variable(z), Function(x, y)) :: t)
+  | _ -> [];;
+
+let rec set_contains list element =
+  match list with
+    [] -> false;
+  | (h1, h2) :: t -> (if  (element = h1) || (element = h2) then true else set_contains t element);;
+
+let rec match_atoms atom clause =
+  match clause with
+    [] -> []
+  | h :: t -> match (atom, h) with
+      (NegAtom(u, v), PosAtom(x, y)) | (PosAtom(u, v), NegAtom(x, y)) -> if u=x then robinson_unify (List.combine v y) else []
+    | (_,_) -> [];;
+
+let rec match_clauses clause1 clause2 =
+  match clause1 with
+    [] -> []
+  | h :: t -> List.append (match_atoms h clause2) (match_clauses t clause2);; 
+
+let rec generate_new_clause clause atoms_to_remove = 
+  match clause with
+    [] -> []
+  | PosAtom(x, y) :: t -> if not (List.mem x atoms_to_remove) then 
+      PosAtom(x,y) :: generate_new_clause t atoms_to_remove 
+    else generate_new_clause t atoms_to_remove
+  | NegAtom(x, y) :: t -> if not (List.mem x atoms_to_remove) then 
+      NegAtom(x,y) :: generate_new_clause t atoms_to_remove 
+    else generate_new_clause t atoms_to_remove ;;
+
+let rec resolve_clauses clause1 clause2 =
+  let atoms_to_remove = match_clauses clause1 clause2 in
+  if List.length clause1 >= List.length clause2 then
+    generate_new_clause clause1 atoms_to_remove
+  else
+    generate_new_clause clause2 atoms_to_remove;;
+
+(* Applies Robinson's resolution algorithm to determine whether the formula is satisfiable. If it can generate an empty clause then the formula is invalid. Otherwise it is satisfiable. *)
+let rec robinson_solve cnf ?(tested=[]) = 
+  for i = 0 to (List.length cnf) - 1 do
+    let clause1 = List.nth cnf i in 
+    for j = (i + 1) to List.length cnf do 
+      let clause2 = List.nth cnf j in
+      print_endline (String.concat "" ("Solving " :: string_of_int i :: " against " :: string_of_int j :: []));      
+      if not (List.mem (clause1, clause2) tested) then 
+        let new_clause = resolve_clauses clause1 clause2 in
+        match  new_clause with 
+          [] -> print_endline "false"; ()
+        | _ -> robinson_solve (new_clause :: cnf) ~tested:((clause1, clause2) :: tested)
+    done;
+  done;;
 
 (*############################################################# MAIN #############################################################*)
 
@@ -228,7 +295,8 @@ let main () =
   let f5 = Implies( Forall(x, And( Atom("P", [x]), Atom("Q", [x]))), And(Forall(x, Atom("P", [x])), Forall(x, Atom("Q", [x])))) in
   let f6 = Implies(Forall(x, Not( Atom("P", [x]))), Not( Exists(x, Atom("P", [x])))) in
   let f7 = Implies(Not( Forall(x, Atom("P", [x]))), Exists(x, Not( Atom("P", [x])))) in
-  print_endline (String.concat "" ("Result: " :: string_of_bool (solve f1) :: []));;
+  (*print_endline (String.concat "" ("Result: " :: string_of_bool (solve f5) :: []));; *)
+  solve f5;;
 
 (* Top level, this should only contain a call to main () *)
 main();;
