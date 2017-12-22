@@ -2,7 +2,6 @@
 
 (* Literal (variable or constant) *)
 type literal =
-    Constant of string                 (* 'a' *)
   | Variable of string                 (* x *)
   | Function of string * literal list  (* f(x, y) *)
 
@@ -21,10 +20,7 @@ type expression =
 type atom = 
     PosAtom of string * literal list  (* P(x) *)
   | NegAtom of string * literal list  (* ~P(x) *)
-
-(* Type for substitutions. Used in the unification algorithm *)
-type substitution =
-    Substitution of literal * literal  
+  | False
 
 (* constants type that acts as a global index to keep generating new constant names during skolemisation *)
 type constants = { index : int ref };;
@@ -35,8 +31,8 @@ let cons = { index = ref (-1) };;
 (* Returns a string from a literal, as x if x is a variable or "x" if x is a constant *)
 let rec string_of_literal literal =
   match literal with
-    Constant x -> String.concat "" ("\'" :: x :: "\'" :: [])
   | Variable x -> x 
+  | Function (x, []) -> String.concat "" ("'" :: x :: "'" :: [])
   | Function (x, y) -> String.concat "" (x :: "(" :: (string_of_literals y) :: ")" :: [])
 
 (* Returns a string from a list of literals, as x, y, z *)
@@ -59,7 +55,8 @@ and string_of_expression expr =
 let string_of_atom atom = 
   match atom with 
     NegAtom (x,y) -> String.concat "" ("~" :: x :: "(" :: (string_of_literals y) :: ")" :: [])
-  | PosAtom (x,y) -> String.concat "" (x :: "(" :: (string_of_literals y) :: ")" :: []);;
+  | PosAtom (x,y) -> String.concat "" (x :: "(" :: (string_of_literals y) :: ")" :: [])
+  | False -> "x";;
 
 (* Returns a string from a clause (list of atoms), as [p1, p2, ...] *)
 let string_of_clause atoms = 
@@ -79,8 +76,9 @@ let rec assign_atom arguments var unbound =
       (match unbound with 
          [] ->                                                                       (* if there is no unbound variable, assign a constant instead *)
          let label = String.concat "" ("c" :: string_of_int !(cons.index) :: []) in
-         [Constant(label)]
-       | _ -> Function("f", unbound)::(assign_atom t var unbound))
+         [Function(label, [])]
+       | _ -> let label = String.concat "" ("f" :: string_of_int !(cons.index) :: []) in
+         Function(label, unbound)::(assign_atom t var unbound))
     else h::(assign_atom t var unbound);;                                            (* for each argument equal to var, replace it with a function of all unbound variables *)
 
 (* Returns a list of all unbound variables in an atom *)
@@ -89,7 +87,7 @@ let rec unbound_variables_in_atom arguments bound =
     [] -> []
   | h::t -> if List.mem h bound then unbound_variables_in_atom t bound else  (* for each argument, if it is bound by a quantifier, remove it from the list *)
       (match h with
-         Constant (x) -> unbound_variables_in_atom t bound                   (* also make sure the argument isn't a constant *)
+         Function (x, []) -> unbound_variables_in_atom t bound                   (* also make sure the argument isn't a constant *)
        | _ -> h::(unbound_variables_in_atom t bound));;
 
 (* Removes duplicate elements from the list *)
@@ -193,76 +191,84 @@ let rec to_cnf expr =
 
 (*############################################################# SOLVING #############################################################*)
 
-let rec vars_f args =
-  match args with 
-    [] -> []
-  | Function(x, y) :: t -> List.append (vars_f y) (vars_f t)
-  | Variable(x) :: t -> Variable(x) :: vars_f t
-  | _ :: t -> vars_f t;;
+(* Returns the cartesian product of two lists *)
+let cartesian l l' = 
+  List.concat (List.map (fun e -> List.map (fun e' -> (e, e')) l') l);;
 
-let rec vars_x set =
+(* Returns a list of all variables appearing in a given literal and it's sub-expressions (e.g. f(x,g(y)) => [x; y] *)
+let rec vars_t literal =
+  match literal with 
+    Variable(x) -> Variable(x) :: []
+  | Function(x, y) -> List.flatten (List.map vars_t y);;
+
+(* Implements robinson's unification algorithm on a given set (list of pairs of literals) *)
+let rec robinson_unify set = 
   match set with 
+    [] -> true
+  | h :: t -> match h with                                                                                                                              
+      (Function(u, v), Function(x, y)) -> if (not (u = x) || (not ((List.length v) = (List.length y)))) then 
+        (print_endline (String.concat "" ("Conflict: " :: string_of_literal (Function(u,v)) :: " and " :: string_of_literal (Function(x,y)) :: []));      (* conflict: G ∪ { f(s0,...,sk) ≐ g(t0,...,tm) } ⇒ ⊥	if f ≠ g or k ≠ m *)
+         false)        
+      else (print_endline (String.concat "" ("Decompose: " :: string_of_literal (Function(u,v)) :: " and " :: string_of_literal (Function(x,y)) :: []));  (* decompose: G ∪ { f(s0,...,sk) ≐ f(t0,...,tk) }	⇒	G ∪ { s0 ≐ t0, ..., sk ≐ tk }	*)
+            (robinson_unify (List.append (List.combine v y) set)))
+    | (Function(u, v), x) -> (print_endline (String.concat "" ("Swap: " :: string_of_literal (Function(u,v)) :: " and " :: string_of_literal x :: []));   (* swap: G ∪ { f(s0,...,sk) ≐ x }	⇒	G ∪ { x ≐ f(s0,...,sk) } *)
+                              robinson_unify ((x, Function(u, v)) :: t))
+    | (Variable(u), Function(x, y)) -> if (List.mem (Variable(u)) (vars_t (Function(x, y)))) then 
+        (print_endline (String.concat "" ("Check: " :: string_of_literal (Variable(u)) :: " and " :: string_of_literal (Function(x, y)) :: []));          (* check: G ∪ { x ≐ f(s0,...,sk) } ⇒	⊥	if x ∈ vars(f(s0,...,sk))*)
+         false) 
+      else (print_endline (String.concat "" ("Eliminate: " :: string_of_literal (Variable(u)) :: " and " :: string_of_literal (Function(x, y)) :: []));   (* eliminate: G ∪ { x ≐ t } ⇒ G{x↦t} ∪ { x ≐ t }	if x ∉ vars(t) and x ∈ vars(G) *)
+            false)
+    | (x, y) -> print_endline (String.concat "" ("Delete: " :: string_of_literal x :: " and " :: string_of_literal y :: [])); robinson_unify t;;          (* delete: G ∪ { t ≐ t } ⇒ G *)
+
+(* Attempts to unify two atoms by first checking that they are a positive and a negative instance of the same predicate, and then applying robinson's unification algorithm on them *)
+let unify_atoms atom1 atom2 = 
+  match (atom1, atom2) with 
+    (NegAtom(u,v), PosAtom(x,y)) | 
+    (PosAtom(u,v), NegAtom(x,y)) -> (print_endline (String.concat "" ("Unifying " :: string_of_atom atom1 :: " and " :: string_of_atom atom2 :: []))); 
+    let result = (robinson_unify (List.combine v y)) in 
+    if result then  
+      (print_endline (String.concat "" ("Unified: " :: string_of_atom atom1 :: " and " :: string_of_atom atom2 :: [])); result)
+    else
+      (print_endline (String.concat "" ("Not unified: " :: string_of_atom atom1 :: " and " :: string_of_atom atom2 :: [])); result)
+  | (x,y) -> false;;
+
+(* Removes all occurences of a specific atom in the given list (clause) *)
+let rec remove_atom l atom = 
+  match l with 
     [] -> []
-  | (Function(x, y), _) :: t -> List.append (vars_f y) (vars_x t)
-  | (Variable(x), _) :: t -> Variable(x) :: vars_x t
-  | _ :: t -> vars_x t;;
+  | h :: t -> if h = atom then remove_atom t atom else h :: remove_atom t atom;;
 
-(* Applies Robinson's unification algorithm to a pair of clauses to find a unifier. If no unifier is found, the two clauses can't be solved to a new clause. *)
-let rec robinson_unify set =
-  match set with 
-    (Constant(x), Constant(y)) :: t -> if x = y then robinson_unify t else []
-  | (Function(u, v), Function(x, y)) :: t -> if u = x then robinson_unify (List.append (List.combine v y) t) else []
-  | (Function(x, y), Variable(z)) :: t -> robinson_unify ((Variable(z), Function(x, y)) :: t)
-  | _ -> [];;
-
-let rec set_contains list element =
-  match list with
-    [] -> false;
-  | (h1, h2) :: t -> (if  (element = h1) || (element = h2) then true else set_contains t element);;
-
-let rec match_atoms atom clause =
-  match clause with
-    [] -> []
-  | h :: t -> match (atom, h) with
-      (NegAtom(u, v), PosAtom(x, y)) | (PosAtom(u, v), NegAtom(x, y)) -> if u=x then robinson_unify (List.combine v y) else []
-    | (_,_) -> [];;
-
-let rec match_clauses clause1 clause2 =
-  match clause1 with
-    [] -> []
-  | h :: t -> List.append (match_atoms h clause2) (match_clauses t clause2);; 
-
-let rec generate_new_clause clause atoms_to_remove = 
-  match clause with
-    [] -> []
-  | PosAtom(x, y) :: t -> if not (List.mem x atoms_to_remove) then 
-      PosAtom(x,y) :: generate_new_clause t atoms_to_remove 
-    else generate_new_clause t atoms_to_remove
-  | NegAtom(x, y) :: t -> if not (List.mem x atoms_to_remove) then 
-      NegAtom(x,y) :: generate_new_clause t atoms_to_remove 
-    else generate_new_clause t atoms_to_remove ;;
-
-let rec resolve_clauses clause1 clause2 =
-  let atoms_to_remove = match_clauses clause1 clause2 in
-  if List.length clause1 >= List.length clause2 then
-    generate_new_clause clause1 atoms_to_remove
-  else
-    generate_new_clause clause2 atoms_to_remove;;
+(* Unifies two clauses (by unifying all their respective atoms) and generates a new clause: [] of no new clause, Empty if empty clause *)
+let rec unify_clauses clause1 clause2 =
+  if clause1 = clause2 then (print_endline (String.concat "" ("Skipping: " :: string_of_clause clause1 :: " and " :: string_of_clause clause2 :: " are equal." :: [])); clause1) else 
+    match (clause1,clause2) with 
+      ([], []) | ([], _) | (_, []) -> [False]
+    | (_,_) ->
+      let rec for_all pairs = 
+        match pairs with
+          [] -> []
+        | (x, y) :: t -> let opposite x y = match (x,y) with 
+              (NegAtom(m,n), PosAtom(u,v)) | (PosAtom(m,n), NegAtom(u,v)) -> if m = u then true else false
+            | (_,_) -> false in  
+          if (opposite x y) then 
+            (if (unify_atoms x y) then 
+               (unify_clauses (remove_atom clause1 x) (remove_atom clause2 y)) 
+             else for_all t) 
+          else for_all t in
+      for_all (cartesian clause1 clause2);;
 
 (* Applies Robinson's resolution algorithm to determine whether the formula is satisfiable. If it can generate an empty clause then the formula is invalid. Otherwise it is satisfiable. *)
-let rec robinson_solve cnf ?(tested=[]) = 
-  for i = 0 to (List.length cnf) - 1 do
-    let clause1 = List.nth cnf i in 
-    for j = (i + 1) to List.length cnf do 
-      let clause2 = List.nth cnf j in
-      print_endline (String.concat "" ("Solving " :: string_of_int i :: " against " :: string_of_int j :: []));      
-      if not (List.mem (clause1, clause2) tested) then 
-        let new_clause = resolve_clauses clause1 clause2 in
-        match  new_clause with 
-          [] -> print_endline "false"; ()
-        | _ -> robinson_solve (new_clause :: cnf) ~tested:((clause1, clause2) :: tested)
-    done;
-  done;;
+let rec robinson_solve cnf = 
+  let rec for_all pairs = 
+    match pairs with
+      [] -> true
+    | (x, y) :: t -> print_endline (String.concat "" ("Testing:  " :: string_of_clause x :: " against " :: string_of_clause y :: [])); 
+      let new_clause = unify_clauses x y in 
+      match new_clause with
+        [] -> for_all t
+      | [False] -> false
+      | _ -> if (new_clause = x) || (new_clause = y) then for_all t else for_all (List.append (List.map (fun e -> (e, new_clause)) cnf) t) in
+  for_all (cartesian cnf cnf);;
 
 (*############################################################# MAIN #############################################################*)
 
@@ -283,9 +289,9 @@ let main () =
   let y = Variable "y" in
   let z = Variable "z" in
 
-  let a = Constant "a" in
-  let b = Constant "b" in
-  let c = Constant "c" in    
+  let a = Function ("a", []) in
+  let b = Function ("b", []) in
+  let c = Function ("c", []) in    
 
   let f = Not( Implies( Forall(x, Or( Atom("P", [x]), Atom("Q", [x]))), Or( Atom("P", [a]), Atom("Q", [a])))) in
   let f1 = Exists(x, Implies( Atom("P", [x]), And( Atom("P", [a]), Atom("P", [b])))) in  
@@ -295,8 +301,8 @@ let main () =
   let f5 = Implies( Forall(x, And( Atom("P", [x]), Atom("Q", [x]))), And(Forall(x, Atom("P", [x])), Forall(x, Atom("Q", [x])))) in
   let f6 = Implies(Forall(x, Not( Atom("P", [x]))), Not( Exists(x, Atom("P", [x])))) in
   let f7 = Implies(Not( Forall(x, Atom("P", [x]))), Exists(x, Not( Atom("P", [x])))) in
-  (*print_endline (String.concat "" ("Result: " :: string_of_bool (solve f5) :: []));; *)
-  solve f5;;
+  let f_test = f7 in
+  print_endline (String.concat "" ("Is the formula " :: string_of_expression f_test :: " valid? " :: string_of_bool (not (solve (Not(f_test)))) :: []));; 
 
 (* Top level, this should only contain a call to main () *)
 main();;
